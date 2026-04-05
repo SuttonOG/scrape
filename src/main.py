@@ -1,8 +1,9 @@
 """
 main.py - Command-line interface for the search engine tool.
 
-Provides an interactive shell with build, load, print, and find commands.
-Wraps all operations in error handling so the shell never crashes.
+Provides an interactive shell with build, load, print, find,
+and benchmark commands. Wraps all operations in error handling
+so the shell never crashes.
 """
 
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crawler import Crawler
 from indexer import Indexer
 from search import SearchEngine
+from benchmark import benchmark_search_engine, print_benchmark_report
 
 # Default path for the index file
 INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -80,12 +82,22 @@ def main() -> None:
                 else:
                     search_engine.find(args.strip())
 
+            elif command == "benchmark":
+                if not index_loaded:
+                    print("Error: No index loaded. Run 'build' or 'load' first.")
+                else:
+                    print("Running benchmarks...")
+                    results = benchmark_search_engine(indexer, search_engine)
+                    print_benchmark_report(results)
+
             elif command == "help":
                 print("Available commands:")
                 print("  build           - Crawl the website and build the index")
                 print("  load            - Load a previously saved index")
                 print("  print <word>    - Show index entry for a word")
                 print("  find <terms>    - Find pages containing all search terms")
+                print('  find "phrase"   - Find pages with an exact phrase')
+                print("  benchmark       - Run performance benchmarks")
                 print("  quit            - Exit the search tool")
 
             elif command in ("quit", "exit"):
