@@ -1,5 +1,5 @@
 
-import BeautifulSoup
+from bs4 import BeautifulSoup
 import requests
 # go to website and scrape
 from urllib.parse import urljoin
@@ -17,7 +17,7 @@ class Crawler:
         self.visited_urls = set()                       # set to not add twice
         self.page_contents = {}                         # for returning {url:content} after crawling
 
-    def extract_page(self,url):
+    def fetch_page(self,url):
 
         # visit page -> beautifulsoup object
         try:
@@ -66,7 +66,7 @@ class Crawler:
             # Resolve relative URLs to absolute
             absolute_url = urljoin(current_url, href)
             # Only keep links within the target website
-            if absolute_url.startswith(self.BASE_URL):
+            if absolute_url.startswith(self.website_url):
                 # Remove URL fragments (e.g., #section)
                 absolute_url = absolute_url.split("#")[0]
                 links.add(absolute_url)
