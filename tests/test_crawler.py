@@ -186,3 +186,167 @@ class TestExtractLinks:
         links = crawler.extract_links(soup, "https://quotes.toscrape.com/")
 
         assert links == set()
+
+
+
+class TestCrawl:
+    """Tests for the full crawl method."""
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_collects_pages(self, mock_get, mock_sleep, crawler):
+        """crawl returns a dict of URL to text content."""
+        # Page 1 has a link to page 2
+        page1_html = """
+        <html><body>
+            <p>Page one content</p>
+            <a href="/page/2/">Next</a>
+        </body></html>
+        """
+        # Page 2 has no further links
+        page2_html = """
+        <html><body>
+            <p>Page two content</p>
+        </body></html>
+        """
+
+        def side_effect(url, timeout=10):
+            mock_resp = Mock()
+            mock_resp.raise_for_status = Mock()
+            if "page/2" in url:
+                mock_resp.text = page2_html
+            else:
+                mock_resp.text = page1_html
+            return mock_resp
+
+        mock_get.side_effect = side_effect
+
+        pages = crawler.crawl()
+
+        assert len(pages) == 2
+        assert any("Page one content" in text for text in pages.values())
+        assert any("Page two content" in text for text in pages.values())
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_does_not_revisit_pages(self, mock_get, mock_sleep, crawler):
+        """crawl only visits each URL once."""
+        # Two pages that link to each other (circular)
+        page1_html = """
+        <html><body>
+            <p>Page one</p>
+            <a href="/page/2/">Next</a>
+        </body></html>
+        """
+        page2_html = """
+        <html><body>
+            <p>Page two</p>
+            <a href="/">Back to start</a>
+        </body></html>
+        """
+
+        def side_effect(url, timeout=10):
+            mock_resp = Mock()
+            mock_resp.raise_for_status = Mock()
+            if "page/2" in url:
+                mock_resp.text = page2_html
+            else:
+                mock_resp.text = page1_html
+            return mock_resp
+
+        mock_get.side_effect = side_effect
+
+        crawler.crawl()
+
+        # Should have exactly 2 calls, not infinite
+        assert mock_get.call_count == 2
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_respects_politeness_delay(self, mock_get, mock_sleep, crawler):
+        """crawl waits between requests but not before the first one."""
+        page1_html = """
+        <html><body>
+            <p>Page one</p>
+            <a href="/page/2/">Next</a>
+        </body></html>
+        """
+        page2_html = "<html><body><p>Page two</p></body></html>"
+
+        def side_effect(url, timeout=10):
+            mock_resp = Mock()
+            mock_resp.raise_for_status = Mock()
+            if "page/2" in url:
+                mock_resp.text = page2_html
+            else:
+                mock_resp.text = page1_html
+            return mock_resp
+
+        mock_get.side_effect = side_effect
+
+        crawler.crawl()
+
+        # Sleep should be called once (before page 2, not before page 1)
+        mock_sleep.assert_called_once_with(crawler.base_timeout)
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_skips_failed_pages(self, mock_get, mock_sleep, crawler):
+        """crawl continues if a page fails to fetch."""
+        import requests as req
+
+        def side_effect(url, timeout=10):
+            if "page/2" in url:
+                raise req.exceptions.ConnectionError("Failed")
+            mock_resp = Mock()
+            mock_resp.raise_for_status = Mock()
+            mock_resp.text = """
+            <html><body>
+                <p>Good page</p>
+                <a href="/page/2/">Broken link</a>
+            </body></html>
+            """
+            return mock_resp
+
+        mock_get.side_effect = side_effect
+
+        pages = crawler.crawl()
+
+        # Only the successful page should be in results
+        assert len(pages) == 1
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_resets_state(self, mock_get, mock_sleep, crawler):
+        """Calling crawl twice starts fresh each time."""
+        html = "<html><body><p>Hello</p></body></html>"
+        mock_resp = Mock()
+        mock_resp.raise_for_status = Mock()
+        mock_resp.text = html
+        mock_get.return_value = mock_resp
+
+        pages1 = crawler.crawl()
+        pages2 = crawler.crawl()
+
+        # Both crawls should return the same result
+        assert len(pages1) == len(pages2)
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_ignores_external_links(self, mock_get, mock_sleep, crawler):
+        """crawl does not follow links to other domains."""
+        html = """
+        <html><body>
+            <p>Content</p>
+            <a href="https://evil.com/hack">External</a>
+        </body></html>
+        """
+        mock_resp = Mock()
+        mock_resp.raise_for_status = Mock()
+        mock_resp.text = html
+        mock_get.return_value = mock_resp
+
+        crawler.crawl()
+
+        # Should only fetch the base URL, never the external link
+        assert mock_get.call_count == 1
