@@ -237,3 +237,66 @@ class TestFindEdgeCases:
         results = search_engine.find("world")
         for url, score in results:
             assert score >= 0.0
+
+
+class TestPhraseSearch:
+    """Tests for phrase search using quoted queries."""
+
+    def test_phrase_match_found(self, search_engine):
+        """Quoted phrase finds pages with adjacent words."""
+        # "good friends" appears adjacent on page 2
+        results = search_engine.find('"good friends"')
+        urls = [url for url, _ in results]
+        assert "https://quotes.toscrape.com/page/2/" in urls
+
+    def test_phrase_no_match(self, search_engine):
+        """Quoted phrase returns empty when words exist but not adjacent."""
+        # "good" and "world" both exist but never adjacent
+        results = search_engine.find('"good world"')
+        assert results == []
+
+    def test_phrase_vs_and_search(self, search_engine):
+        """Phrase search is stricter than AND search."""
+        and_results = search_engine.find("the world")
+        phrase_results = search_engine.find('"the world"')
+        # Phrase results should be a subset of (or equal to) AND results
+        phrase_urls = {url for url, _ in phrase_results}
+        and_urls = {url for url, _ in and_results}
+        assert phrase_urls.issubset(and_urls)
+
+    def test_single_word_phrase(self, search_engine):
+        """A single-word 'phrase' behaves like a normal search."""
+        results_phrase = search_engine.find('"world"')
+        results_normal = search_engine.find("world")
+        urls_phrase = [url for url, _ in results_phrase]
+        urls_normal = [url for url, _ in results_normal]
+        assert urls_phrase == urls_normal
+
+    def test_phrase_ranked_by_tfidf(self, search_engine):
+        """Phrase search results are ranked by TF-IDF score."""
+        results = search_engine.find('"the world"')
+        if len(results) > 1:
+            scores = [score for _, score in results]
+            assert scores == sorted(scores, reverse=True)
+
+
+class TestQuerySuggestions:
+    """Tests for query suggestions in search results."""
+
+    def test_suggestions_shown_for_print(self, search_engine, capsys):
+        """print_word shows suggestions for misspelled words."""
+        search_engine.print_word("wrold")
+        captured = capsys.readouterr()
+        assert "Did you mean" in captured.out
+
+    def test_suggestions_shown_for_find(self, search_engine, capsys):
+        """find shows suggestions for terms not in the index."""
+        search_engine.find("wrold")
+        captured = capsys.readouterr()
+        assert "Did you mean" in captured.out
+
+    def test_no_suggestions_for_valid_word(self, search_engine, capsys):
+        """No suggestions shown when the word exists."""
+        search_engine.print_word("world")
+        captured = capsys.readouterr()
+        assert "Did you mean" not in captured.out
