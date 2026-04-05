@@ -3,72 +3,94 @@ from bs4 import BeautifulSoup
 import requests
 # go to website and scrape
 from urllib.parse import urljoin
+import time
+
 
 # Create crawler -> fetch page -> extract links -> go to links -> scrape link content  -> add to page_contents
 class Crawler:
 
-    #globals
-    base_timeout = 6                                # required delay between the requests
-    website_url = 'https://quotes.toscrape.com/'   
+    # globals
+    base_timeout = 6                                # required delay between requests
+    website_url = 'https://quotes.toscrape.com'     # no trailing slash for clean joins
 
     def __init__(self):
+        self.visited_urls = set()
+        self.page_contents = {}
 
-        # track pages visited 
-        self.visited_urls = set()                       # set to not add twice
-        self.page_contents = {}                         # for returning {url:content} after crawling
-
-    def fetch_page(self,url):
-
-        # visit page -> beautifulsoup object
+    def fetch_page(self, url):
+        """Fetch a single page and return a BeautifulSoup object."""
         try:
-            response = requests.get(url, timeout = 10)
-            response.raise_for_status()             # check it was successful
-            
-            # if success, return beautifulsoup object
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
             return BeautifulSoup(response.text, "html.parser")
-        
         except requests.RequestException as error:
-            # error case print 
-            print(f"Unable to extract page {url}\n Error code: {error}")
+            print(f"  Unable to extract page {url}\n  Error code: {error}")
             return None
-        
+
     def extract_text(self, soup):
-        """
-        Extract visible text content from a parsed HTML page.
-
-        Args:
-            soup: BeautifulSoup object of the page.
-
-        Returns:
-            A string of all visible text on the page.
-        """
-        # Remove script and style elements
+        """Extract visible text content from a parsed HTML page."""
         for element in soup(["script", "style"]):
             element.decompose()
-
         text = soup.get_text(separator=" ", strip=True)
         return text
-    
+
     def extract_links(self, soup, current_url):
-        """
-        Extract all internal links from a parsed HTML page.
-
-        Args:
-            soup: BeautifulSoup object of the page.
-            current_url: The URL of the current page (for resolving relative links).
-
-        Returns:
-            A set of absolute URLs found on the page.
-        """
+        """Extract all internal links from a parsed HTML page."""
         links = set()
         for anchor in soup.find_all("a", href=True):
             href = anchor["href"]
-            # Resolve relative URLs to absolute
             absolute_url = urljoin(current_url, href)
-            # Only keep links within the target website
             if absolute_url.startswith(self.website_url):
-                # Remove URL fragments (e.g., #section)
                 absolute_url = absolute_url.split("#")[0]
                 links.add(absolute_url)
         return links
 
+    def crawl(self):
+        """
+        Crawl the target website using breadth-first search.
+
+        Discovers all internal pages starting from the base URL,
+        respecting the politeness delay between requests.
+
+        Returns:
+            Dictionary mapping each crawled URL to its text content.
+        """
+        # Reset state for a fresh crawl
+        self.visited_urls = set()
+        self.page_contents = {}
+
+        # Queue of URLs to visit (breadth-first)
+        queue = [self.website_url + "/"]
+
+        while queue:
+            url = queue.pop(0)
+
+            # Skip if already visited
+            if url in self.visited_urls:
+                continue
+
+            # Respect politeness window (skip delay for the very first request)
+            if self.visited_urls:
+                print(f"  Waiting {self.base_timeout}s (politeness delay)...")
+                time.sleep(self.base_timeout)
+
+            print(f"  Crawling: {url}")
+            self.visited_urls.add(url)
+
+            soup = self.fetch_page(url)
+            if soup is None:
+                continue
+
+            # Extract and store page text
+            text = self.extract_text(soup)
+            if text:
+                self.page_contents[url] = text
+
+            # Discover new links and add unvisited ones to the queue
+            links = self.extract_links(soup, url)
+            for link in links:
+                if link not in self.visited_urls:
+                    queue.append(link)
+
+        print(f"  Crawl complete. {len(self.page_contents)} pages collected.")
+        return self.page_contents
