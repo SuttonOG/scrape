@@ -350,3 +350,117 @@ class TestCrawl:
 
         # Should only fetch the base URL, never the external link
         assert mock_get.call_count == 1
+
+
+class TestEdgeCases:
+    """Tests for edge case handling in the crawler."""
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_retry_on_failure(self, mock_get, mock_sleep, crawler):
+        """fetch_page retries on transient errors before giving up."""
+        import requests as req
+        mock_get.side_effect = [
+            req.exceptions.ConnectionError("Fail 1"),
+            req.exceptions.ConnectionError("Fail 2"),
+            req.exceptions.ConnectionError("Fail 3"),
+        ]
+
+        result = crawler.fetch_page("https://quotes.toscrape.com/")
+
+        assert result is None
+        assert mock_get.call_count == 3
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_retry_succeeds_on_second_attempt(self, mock_get, mock_sleep, crawler):
+        """fetch_page returns successfully after a transient failure."""
+        import requests as req
+
+        success_response = Mock()
+        success_response.text = "<html><body><p>Success</p></body></html>"
+        success_response.raise_for_status = Mock()
+
+        mock_get.side_effect = [
+            req.exceptions.ConnectionError("Fail 1"),
+            success_response,
+        ]
+
+        result = crawler.fetch_page("https://quotes.toscrape.com/")
+
+        assert result is not None
+        assert result.find("p").text == "Success"
+        assert mock_get.call_count == 2
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_retry_backoff_timing(self, mock_get, mock_sleep, crawler):
+        """Retry delays increase with each attempt (exponential backoff)."""
+        import requests as req
+        mock_get.side_effect = [
+            req.exceptions.ConnectionError("Fail 1"),
+            req.exceptions.ConnectionError("Fail 2"),
+            req.exceptions.ConnectionError("Fail 3"),
+        ]
+
+        crawler.fetch_page("https://quotes.toscrape.com/")
+
+        # First retry: base_timeout * 1, second retry: base_timeout * 2
+        calls = mock_sleep.call_args_list
+        assert calls[0][0][0] == crawler.base_timeout * 1
+        assert calls[1][0][0] == crawler.base_timeout * 2
+
+    def test_extract_links_skips_javascript(self, crawler):
+        """extract_links ignores javascript: links."""
+        html = '<html><body><a href="javascript:void(0)">Click</a></body></html>'
+        soup = BeautifulSoup(html, "html.parser")
+        links = crawler.extract_links(soup, "https://quotes.toscrape.com/")
+
+        assert links == set()
+
+    def test_extract_links_skips_mailto(self, crawler):
+        """extract_links ignores mailto: links."""
+        html = '<html><body><a href="mailto:test@example.com">Email</a></body></html>'
+        soup = BeautifulSoup(html, "html.parser")
+        links = crawler.extract_links(soup, "https://quotes.toscrape.com/")
+
+        assert links == set()
+
+    def test_extract_links_skips_empty_href(self, crawler):
+        """extract_links ignores empty href attributes."""
+        html = '<html><body><a href="">Empty</a></body></html>'
+        soup = BeautifulSoup(html, "html.parser")
+        links = crawler.extract_links(soup, "https://quotes.toscrape.com/")
+
+        assert links == set()
+
+    def test_extract_text_empty_after_stripping(self, crawler):
+        """Pages with only scripts/styles produce empty text."""
+        html = """
+        <html><body>
+            <script>var x = 1;</script>
+            <style>.foo { color: red; }</style>
+        </body></html>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        text = crawler.extract_text(soup)
+
+        assert text.strip() == ""
+
+    @patch("crawler.time.sleep")
+    @patch("crawler.requests.get")
+    def test_crawl_skips_empty_text_pages(self, mock_get, mock_sleep, crawler):
+        """Pages with no meaningful text are not included in results."""
+        html = """
+        <html><body>
+            <script>var x = 1;</script>
+        </body></html>
+        """
+        mock_resp = Mock()
+        mock_resp.raise_for_status = Mock()
+        mock_resp.text = html
+        mock_get.return_value = mock_resp
+
+        pages = crawler.crawl()
+
+        assert len(pages) == 0

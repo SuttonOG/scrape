@@ -200,3 +200,40 @@ class TestFind:
         captured = capsys.readouterr()
         assert "frequency=" in captured.out
         assert "positions=" in captured.out
+
+
+class TestFindEdgeCases:
+    """Edge case tests for the find method."""
+
+    def test_partial_match_not_returned(self, search_engine):
+        """Pages matching only some terms are excluded."""
+        # "sleepy" is only on page 2, "fighting" is only on page 3
+        results = search_engine.find("sleepy fighting")
+        assert results == []
+
+    def test_find_with_extra_whitespace(self, search_engine):
+        """find handles extra whitespace in the query."""
+        results_clean = search_engine.find("good friends")
+        results_messy = search_engine.find("  good    friends  ")
+
+        urls_clean = [url for url, _ in results_clean]
+        urls_messy = [url for url, _ in results_messy]
+        assert urls_clean == urls_messy
+
+    def test_find_single_page_word(self, search_engine):
+        """find returns exactly one page for a word unique to one page."""
+        results = search_engine.find("conscience")
+        assert len(results) == 1
+        assert "page/2/" in results[0][0]
+
+    def test_find_all_pages_word(self, search_engine):
+        """find returns all pages for a word appearing everywhere."""
+        # "a" appears on all three sample pages
+        results = search_engine.find("a")
+        assert len(results) == 3
+
+    def test_find_scores_are_positive(self, search_engine):
+        """All returned TF-IDF scores are non-negative."""
+        results = search_engine.find("world")
+        for url, score in results:
+            assert score >= 0.0
